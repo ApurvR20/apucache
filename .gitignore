@@ -1,0 +1,9 @@
+# binaries and test output
+*.exe
+*.test
+*.out
+
+# editor and OS files
+.idea/
+.vscode/
+.DS_Store
