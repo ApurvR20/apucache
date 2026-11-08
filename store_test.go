@@ -1,6 +1,8 @@
 package apucache
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 )
@@ -42,5 +44,55 @@ func TestEviction(t *testing.T) {
 	}
 	if _, ok := s.Get("0"); ok {
 		t.Fatal("expected the oldest key to be evicted")
+	}
+}
+
+func TestRecovery(t *testing.T) { // does data survive a restart
+	path := filepath.Join(t.TempDir(), "cache.aof")
+
+	s, err := Open(100, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Set("a", "1")
+	s.Set("b", "2")
+	s.Close()
+
+	s2, err := Open(100, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	if v, ok := s2.Get("a"); !ok || v != "1" {
+		t.Fatalf("expected a=1 after restart, got %q (ok=%v)", v, ok)
+	}
+	if v, ok := s2.Get("b"); !ok || v != "2" {
+		t.Fatalf("expected b=2 after restart, got %q (ok=%v)", v, ok)
+	}
+}
+
+func TestTruncatedTail(t *testing.T) { //does a half-written record get handled while writing to log
+	path := filepath.Join(t.TempDir(), "cache.aof")
+
+	s, _ := Open(100, path)
+	s.Set("a", "1")
+	s.Close()
+
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(`{"k":"b","v":`)
+	f.Close()
+
+	s2, err := Open(100, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	if v, ok := s2.Get("a"); !ok || v != "1" {
+		t.Fatalf("expected a=1, got %q (ok=%v)", v, ok)
+	}
+	if _, ok := s2.Get("b"); ok {
+		t.Fatal("half-written record should have been discarded")
 	}
 }

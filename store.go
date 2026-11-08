@@ -22,6 +22,7 @@ type shard struct {
 
 type Store struct {
 	shards [numShards]*shard //array of maps. hash the req, %16, search the correspoding shard
+	log    *aof
 }
 
 func New(capacity int) *Store { //splits cap across 16 shards, and assigns default data
@@ -46,7 +47,7 @@ func (s *Store) shardFor(key string) *shard {
 	return s.shards[h.Sum32()%numShards]
 }
 
-func (s *Store) Set(key, value string) {
+func (s *Store) set(key, value string) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -58,7 +59,7 @@ func (s *Store) Set(key, value string) {
 	}
 
 	sh.data[key] = sh.order.PushFront(&entry{key, value})
-	if sh.order.Len() > sh.cap { //if cap is exceeded, we get the LRU node, get its key from entry (node stores both), node is removed from list, key is removed from map. the value stored in the map is a pointer to the node (*list.Element)
+	if sh.order.Len() > sh.cap { //if cap is exceeded, we get the LRU node, get its key from entry (node stores both), node is removed from list,
 		oldest := sh.order.Back()
 		sh.order.Remove(oldest)
 		delete(sh.data, oldest.Value.(*entry).key)
