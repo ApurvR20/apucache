@@ -4,7 +4,7 @@ import "testing"
 
 // struct T from testing package
 func TestSetGet(t *testing.T) {
-	s := New() //can call any function in same package
+	s := New(100) //can call any function in same package
 	s.Set("a", "1")
 
 	v, ok := s.Get("a")

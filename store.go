@@ -1,32 +1,45 @@
 package apucache
 
 import (
+	"container/list"
 	"hash/fnv"
 	"sync"
 )
 
 const numShards = 16
 
-// creating multiple maps(shards) with their own locks, so goroutines less likely wait on each other, while holding different keys
+type entry struct {
+	key   string
+	value string
+}
+
 type shard struct {
-	mu   sync.RWMutex
-	data map[string]string
+	mu    sync.Mutex //plain mutex instead of RW. Get changes order, so reads are writes as well
+	data  map[string]*list.Element
+	order *list.List
+	cap   int
 }
 
-// router for shards
 type Store struct {
-	shards [numShards]*shard
+	shards [numShards]*shard //array of maps. hash the req, %16, search the correspoding shard
 }
 
-func New() *Store {
+func New(capacity int) *Store { //splits cap across 16 shards, and assigns default data
+	perShard := capacity / numShards
+	if perShard < 1 {
+		perShard = 1
+	}
 	s := &Store{}
 	for i := range s.shards {
-		s.shards[i] = &shard{data: make(map[string]string)}
+		s.shards[i] = &shard{
+			data:  make(map[string]*list.Element),
+			order: list.New(),
+			cap:   perShard,
+		}
 	}
 	return s
 }
 
-// convert key into bytes, bytes into a number, %16, and pick one of 0-15 shards to slot the key, to spread the traffic across locks
 func (s *Store) shardFor(key string) *shard {
 	h := fnv.New32a()
 	h.Write([]byte(key))
@@ -37,13 +50,30 @@ func (s *Store) Set(key, value string) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	sh.data[key] = value
+
+	if el, ok := sh.data[key]; ok { //move the found key:value to front of list
+		el.Value.(*entry).value = value
+		sh.order.MoveToFront(el)
+		return
+	}
+
+	sh.data[key] = sh.order.PushFront(&entry{key, value})
+	if sh.order.Len() > sh.cap { //if cap is exceeded, we get the LRU node, get its key from entry (node stores both), node is removed from list, key is removed from map. the value stored in the map is a pointer to the node (*list.Element)
+		oldest := sh.order.Back()
+		sh.order.Remove(oldest)
+		delete(sh.data, oldest.Value.(*entry).key)
+	}
 }
 
 func (s *Store) Get(key string) (string, bool) {
 	sh := s.shardFor(key)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	v, ok := sh.data[key]
-	return v, ok
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	el, ok := sh.data[key]
+	if !ok {
+		return "", false
+	}
+	sh.order.MoveToFront(el)
+	return el.Value.(*entry).value, true
 }
