@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -95,4 +96,23 @@ func TestTruncatedTail(t *testing.T) { //does a half-written record get handled 
 	if _, ok := s2.Get("b"); ok {
 		t.Fatal("half-written record should have been discarded")
 	}
+}
+
+/*It starts 8 goroutines that all `Set` and `Get` the same 100 keys 1000 times, then waits for them to finish. It has no assertions. Its job is to create real concurrent traffic, so `go test -race` can fail it if any access isn't protected by a lock.*/
+
+func TestConcurrent(t *testing.T) {
+	s := New(1000)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 1000; i++ {
+				k := strconv.Itoa(i % 100)
+				s.Set(k, "v")
+				s.Get(k)
+			}
+		}()
+	}
+	wg.Wait()
 }

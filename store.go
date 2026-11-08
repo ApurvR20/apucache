@@ -21,16 +21,20 @@ type shard struct {
 }
 
 type Store struct {
-	shards [numShards]*shard //array of maps. hash the req, %16, search the correspoding shard
+	shards []*shard //array of maps. hash the req, %16, search the correspoding shard
 	log    *aof
 }
 
-func New(capacity int) *Store { //splits cap across 16 shards, and assigns default data
-	perShard := capacity / numShards
+func New(capacity int) *Store { //splits cap across n shards, and assigns default data. default count of shars is 16, unless passed
+	return newStore(capacity, numShards)
+}
+
+func newStore(capacity, n int) *Store {
+	perShard := capacity / n
 	if perShard < 1 {
 		perShard = 1
 	}
-	s := &Store{}
+	s := &Store{shards: make([]*shard, n)}
 	for i := range s.shards {
 		s.shards[i] = &shard{
 			data:  make(map[string]*list.Element),
@@ -44,7 +48,7 @@ func New(capacity int) *Store { //splits cap across 16 shards, and assigns defau
 func (s *Store) shardFor(key string) *shard {
 	h := fnv.New32a()
 	h.Write([]byte(key))
-	return s.shards[h.Sum32()%numShards]
+	return s.shards[h.Sum32()%uint32(len(s.shards))]
 }
 
 func (s *Store) set(key, value string) {
